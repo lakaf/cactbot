@@ -2,28 +2,11 @@
 
 // Rename this file to `oopsyraidsy.js` then edit to change the oopsyraidsy ui.
 
-
-// Language to use for parsing oopsy raidsy.
-Options.Language = 'en';
-
-
-// Number of items in the live list to show during combat.  After combat
-// is over, the list will be maximized to the overlay size (with a
-// scrollbar if necessary).  When combat starts again it will shrink.
-Options.NumLiveListItemsInCombat = 5;
-
-
-// Minimum time (in seconds) before showing a "mistake" for a pull.
-// This prevent showing "early pull (0.1s)" sorts of messages which
-// aren't that useful.
-Options.MinimumTimeForPullMistake = 0.4;
-
-
 // A set of triggers to be ignored. The key is the 'id' of the trigger, and
 // the value should be true if the trigger is to be ignored, whereas false
 // will have no effect.  The trigger ids can be found in the trigger files for
 // each fight in the files inside of this directory:
-// https://github.com/quisquous/cactbot/tree/master/ui/oopsyraidsy/data/
+// https://github.com/quisquous/cactbot/tree/main/ui/oopsyraidsy/data/
 Options.DisabledTriggers = {
   'General Rabbit Medium': true,
   'General Early Pull': true,
@@ -50,19 +33,19 @@ Options.AbilityIdNameMap['26CA'] = 'White Swirly';
 
 
 // An array of user-defined triggers, in the format defined in the readme:
-// https://github.com/quisquous/cactbot/tree/master/ui/oopsyraidsy/data/
+// https://github.com/quisquous/cactbot/tree/main/docs/OopsyraidsyGuide.md
 //
 // Here's an example trigger to show a line in the mistake log when
 // you crit adlo yourself in Summerford Farms.
 Options.Triggers = [
   {
-    zoneRegex: /^Middle La Noscea$/,
+    zoneId: ZoneId.MiddleLaNoscea,
     triggers: [
       {
         id: 'Test Self Crit Adlo',
         healRegex: 'B9', // Adloquium ability id
-        condition: function(e, data) {
-          return e.targetName == data.me && e.damageStr.substr(-1) == '!';
+        condition: function(e, data, matches) {
+          return e.targetName == data.me && matches.flags === '10004';
         },
         mistake: function(e, data) {
           let text = e.abilityName + ': ' + e.damageStr;

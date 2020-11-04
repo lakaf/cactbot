@@ -4,7 +4,7 @@ let kTestPhaseStart = 'cactbot phase start';
 let kTestPhaseEnd = 'cactbot phase end';
 
 class DpsPhaseTracker {
-  constructor() {
+  constructor(options) {
     // Ordered list of phases.  Each phase is:
     // {
     //   name: display name string
@@ -24,96 +24,44 @@ class DpsPhaseTracker {
     this.title = null;
     this.lastData = null;
     this.zone = null;
-    this.rebuildBossList();
-    this.currentBoss = null;
     this.inCombat = false;
 
     this.defaultPhase = null;
     this.defaultPhaseIdx = 0;
+
+    this.lang = options.ParserLanguage;
+
+    this.areaSealRegex = LocaleRegex.areaSeal[this.lang] || LocaleRegex.areaSeal['en'];
+    this.areaUnsealRegex = LocaleRegex.areaUnseal[this.lang] || LocaleRegex.areaUnseal['en'];
+    this.countdownStartRegex = LocaleRegex.countdownStart[this.lang] ||
+      LocaleRegex.countdownStart['en'];
   }
 
   onLogEvent(logs) {
-    if (!gLang)
-      return;
-
-    // Zones without boss info get default phases.
-    if (this.bosses.length == 0) {
-      if (!this.defaultPhase) {
-        for (let i = 0; i < logs.length; ++i) {
-          let log = logs[i];
-          if (log.match(gLang.areaSealRegex()) || log.indexOf(kTestPhaseStart) >=0) {
-            this.defaultPhaseIdx++;
-            this.defaultPhase = 'B' + this.defaultPhaseIdx;
-            this.onFightPhaseStart(this.defaultPhase, this.lastData);
-            return;
-          }
-        }
-      } else {
-        for (let i = 0; i < logs.length; ++i) {
-          let log = logs[i];
-          if (log.match(gLang.areaUnsealRegex()) || log.indexOf(kTestPhaseEnd) >=0) {
-            this.onFightPhaseEnd(this.defaultPhase, this.lastData);
-            this.defaultPhase = 0;
-            return;
-          }
-        }
-      }
-      return;
-    }
-    if (!this.currentBoss) {
-      for (let i = 0; i < logs.length; ++i) {
-        let log = logs[i];
-        if (this.countdownBoss && log.match(gLang.countdownStartRegex())) {
-          this.onFightStart(this.countdownBoss);
+    if (!this.defaultPhase) {
+      for (const log of logs) {
+        if (this.areaSealRegex.test(log) || log.includes(kTestPhaseStart)) {
+          this.defaultPhaseIdx++;
+          this.defaultPhase = 'B' + this.defaultPhaseIdx;
+          this.onFightPhaseStart(this.defaultPhase, this.lastData);
           return;
-        }
-        for (let b = 0; b < this.bosses.length; ++b) {
-          let boss = this.bosses[b];
-          if (log.match(boss.startRegex)) {
-            this.onFightStart(boss);
-            return;
-          }
         }
       }
     } else {
-      // TODO: phases??
-      let defaultEndRegex = / 21:........:400000(03|10):/;
-      let endRegex = this.currentBoss.endRegex ? this.currentBoss.endRegex : defaultEndRegex;
-      for (let i = 0; i < logs.length; ++i) {
-        let log = logs[i];
-        if (log.match(endRegex)) {
-          this.onFightEnd();
+      for (const log of logs) {
+        if (this.areaUnsealRegex.test(log) || log.includes(kTestPhaseEnd)) {
+          this.onFightPhaseEnd(this.defaultPhase, this.lastData);
+          this.defaultPhase = 0;
           return;
         }
       }
     }
   }
 
-  onZoneChange(zone) {
+  onChangeZone(zone) {
     this.clearPhases();
     this.zone = zone;
-    this.rebuildBossList();
     this.title = null;
-  }
-
-  rebuildBossList() {
-    this.bosses = [];
-    this.countdownBoss = null;
-    if (!this.zone)
-      return;
-
-    for (let i = 0; i < gBossFightTriggers.length; ++i) {
-      let boss = gBossFightTriggers[i];
-      if (!this.zone.match(boss.zoneRegex))
-        continue;
-      this.bosses.push(boss);
-      if (boss.countdownStarts) {
-        // Only one boss can be started with countdown in a zone.
-        if (this.countdownBoss)
-          console.error('Countdown boss conflict: ' + boss.id + ', ' + this.countdownBoss.id);
-        this.countdownBoss = boss;
-      }
-    }
   }
 
   onOverlayDataUpdate(dps) {
@@ -134,14 +82,11 @@ class DpsPhaseTracker {
   }
 
   onFightStart(boss) {
-    this.currentBoss = boss;
     this.clearPhases();
     this.title = boss.id;
   }
 
   onFightEnd() {
-    // *sparkles*
-    this.currentBoss = null;
   }
 
   inCombatChanged(inCombat) {
@@ -200,12 +145,12 @@ class DpsPhaseTracker {
   // difference between the two as an {Encounter: {}, Combatant: {}} object.
   // It drops some of the fields to make the diff.
   //
-  // phase_start is optional, if it doesn't exist, it assumes default values
+  // phaseStart is optional, if it doesn't exist, it assumes default values
   // from the start of the fight.
   //
   // This may return null (used as a hint not to bother displaying the diff).
-  diffUpdateInfo(phase_start, phase_end) {
-    if (!phase_end) {
+  diffUpdateInfo(phaseStart, phaseEnd) {
+    if (!phaseEnd) {
       console.error(['diffError: no phase end', phase]);
       return;
     }
@@ -214,8 +159,8 @@ class DpsPhaseTracker {
     // attacks, causing a total duration of zero.  Just ignore these.
     // This happens where ACT stops providing new updates but log entries
     // or other triggers indicate that phases have started.
-    if (phase_start) {
-      if (phase_start.Encounter.DURATION == phase_end.Encounter.DURATION)
+    if (phaseStart) {
+      if (phaseStart.Encounter.DURATION == phaseEnd.Encounter.DURATION)
         return;
     }
 
@@ -273,20 +218,20 @@ class DpsPhaseTracker {
     ];
 
     let encounter = {};
-    if (phase_start) {
-      diffProps(phase_start.Encounter, phase_end.Encounter, encounterDiffProps, encounter);
+    if (phaseStart) {
+      diffProps(phaseStart.Encounter, phaseEnd.Encounter, encounterDiffProps, encounter);
       setDPS(encounter.DURATION, encounter.DURATION, encounter);
     } else {
-      copyProps(phase_end.Encounter, encounterDiffProps, encounter);
+      copyProps(phaseEnd.Encounter, encounterDiffProps, encounter);
       setDPS(encounter.DURATION, encounter.DURATION, encounter);
     }
 
     // Deliberately use end, as combatants aren't initally listed before
     // they've done any damage right when the fight starts.
     let combatant = {};
-    for (let name in phase_end.Combatant) {
-      let start = phase_start ? phase_start.Combatant[name] : null;
-      let end = phase_end.Combatant[name];
+    for (let name in phaseEnd.Combatant) {
+      let start = phaseStart ? phaseStart.Combatant[name] : null;
+      let end = phaseEnd.Combatant[name];
       if (!end)
         continue;
 
@@ -308,3 +253,6 @@ class DpsPhaseTracker {
     };
   }
 }
+
+if (typeof module !== 'undefined' && module.exports)
+  module.exports = DpsPhaseTracker;

@@ -1,41 +1,48 @@
 'use strict';
 
 class SeaBase {
-  constructor() {
+  constructor(options) {
     this._dbName = 'seabase';
     this._dbVersion = 1;
     this._storeName = 'catches';
     this.db = null;
-    this.locale = Options.Language;
+    this.options = options;
+    this.parserLang = this.options.ParserLanguage;
   }
 
   findKey(obj, val) {
-    return Object.keys(obj).find((x) => obj[x] == val);
+    return Object.keys(obj).find((x) =>
+      obj[x] == val ||
+      Array.isArray(obj[x]) && obj[x].includes(val));
+  }
+
+  firstIfArray(obj) {
+    if (Array.isArray(obj))
+      return obj[0];
+    return obj;
   }
 
   getConnection() {
-    let _this = this;
+    return new Promise((resolve, reject) => {
+      let req = window.indexedDB.open(this._dbName, this._dbVersion);
 
-    return new Promise(function(resolve, reject) {
-      let req = window.indexedDB.open(_this._dbName, _this._dbVersion);
-
-      req.onsuccess = function(event) {
-        resolve(this.result);
+      req.onsuccess = (event) => {
+        resolve(req.result);
       };
 
-      req.onerror = function(event) {
-        reject(this.error);
+      req.onerror = (event) => {
+        reject(req.error);
       };
 
-      req.onupgradeneeded = function(event) {
+      req.onupgradeneeded = (event) => {
         let db = event.target.result;
         let tx = event.target.transaction;
         let objectStore;
 
-        if (!db.objectStoreNames.contains(_this._storeName))
-          objectStore = db.createObjectStore(_this._storeName, { autoIncrement: true });
+        if (!db.objectStoreNames.contains(this._storeName))
+          objectStore = db.createObjectStore(this._storeName, { autoIncrement: true });
         else
-          objectStore = tx.objectStore(_this._storeName);
+          objectStore = tx.objectStore(this._storeName);
 
 
         if (!objectStore.indexNames.contains('fish'))
@@ -46,7 +53,7 @@ class SeaBase {
           objectStore.createIndex('fishbaitchum', ['fish', 'bait', 'chum'], { unique: false });
 
 
-        tx.oncomplete = function(event) {
+        tx.oncomplete = (event) => {
           resolve(db);
         };
       };
@@ -62,38 +69,38 @@ class SeaBase {
     let q1;
     let q3;
 
-    times.sort(function(a, b) {
-      return a-b;
+    times.sort((a, b) => {
+      return a - b;
     });
 
     // if there's less than 5 items, just assume it's legit
     if (times.length < 5) {
       return {
         low: times[0],
-        high: times[times.length-1],
+        high: times[times.length - 1],
       };
     }
 
     // find q2 (median)
     // we only need the index for the median
-    let q2_index = Math.floor(times.length / 2);
+    let q2Index = Math.floor(times.length / 2);
 
     // find q1 (median of first half)
-    let q1_index = Math.floor(q2_index / 2);
+    let q1Index = Math.floor(q2Index / 2);
 
-    if (q2_index % 2 || q2_index == 0)
-      q1 = times[q1_index];
+    if (q2Index % 2 || q2Index == 0)
+      q1 = times[q1Index];
     else
-      q1 = (times[q1_index] + times[q1_index - 1]) / 2;
+      q1 = (times[q1Index] + times[q1Index - 1]) / 2;
 
 
     // find q2 (median of second half)
-    let q3_index = q1_index + q2_index;
+    let q3Index = q1Index + q2Index;
 
-    if (q3_index % 2 || q2_index == 0)
-      q3 = times[q3_index];
+    if (q3Index % 2 || q2Index == 0)
+      q3 = times[q3Index];
     else
-      q3 = (times[q3_index] + times[q3_index - 1]) / 2;
+      q3 = (times[q3Index] + times[q3Index - 1]) / 2;
 
 
     let iqr = q3 - q1;
@@ -113,7 +120,7 @@ class SeaBase {
     let i;
 
     // Iterate forward until a suitable minimum
-    for (i=0; i < times.length; i++) {
+    for (i = 0; i < times.length; i++) {
       if (times[i] >= thresholds.low) {
         min = times[i];
         break;
@@ -121,7 +128,7 @@ class SeaBase {
     }
 
     // Iterate backward until a suitable maximum
-    for (i=times.length-1; i >= 0; i--) {
+    for (i = times.length - 1; i >= 0; i--) {
       if (times[i] <= thresholds.high) {
         max = times[i];
         break;
@@ -137,13 +144,13 @@ class SeaBase {
   addCatch(data) {
     // Add a catch to the database
     let commit = true;
-    let _this = this;
 
     // Make sure we have complete data before recording
     let keys = ['fish', 'bait', 'place', 'castTimestamp', 'hookTime', 'reelTime', 'chum', 'snagging'];
 
     for (let index in keys) {
-      if (!data.hasOwnProperty(keys[index]) || data[keys[index]] === null) {
+      if (!Object.prototype.hasOwnProperty.call(data, keys[index]) ||
+          data[keys[index]] === null) {
         commit = false;
         console.log(keys[index] + 'missing in catch');
       }
@@ -152,15 +159,21 @@ class SeaBase {
     if (!commit)
       return false;
 
-    this.getConnection().then(function(db) {
-      let tx = db.transaction(_this._storeName, 'readwrite');
-      let store = tx.objectStore(_this._storeName);
+    this.getConnection().then((db) => {
+      let tx = db.transaction(this._storeName, 'readwrite');
+      let store = tx.objectStore(this._storeName);
 
       store.add(data);
     });
   }
 
   getInfo(lookup, value) {
+    // Note: the name entry may be a single string, or it may
+    // be an array with multiple values in it.  The first name
+    // in the array is the canonical value and should always be
+    // returned, even if looking up by another name in its list.
+    // This lets getPlace("german grammar used only when casting")
+    // return the correct place name to display in the ui.
     let info;
     // Value can be one of three things
     if (typeof value === 'object' && value !== null) {
@@ -169,27 +182,32 @@ class SeaBase {
       if (value.id && !value.name) {
         info = {
           id: value.id,
-          name: gFisherData[lookup][this.locale][value.id],
+          name: this.firstIfArray(gFisherData[lookup][this.parserLang][value.id]),
         };
       } else if (!value.id && value.name) {
+        // Return the first / primary name regardless of what is passed in
+        // when doing a reverse lookup by name.
+        let key = this.findKey(gFisherData[lookup][this.parserLang], value.name);
         info = {
-          id: this.findKey(gFisherData[lookup][this.locale], value.name),
-          name: value.name,
+          id: key,
+          name: this.firstIfArray(gFisherData[lookup][this.parserLang][key]),
         };
       } else {
         info = value;
       }
     } else if (isNaN(value)) {
       // 2. String with the name
+      // See note above about reverse lookups.
+      let key = this.findKey(gFisherData[lookup][this.parserLang], value);
       info = {
-        id: this.findKey(gFisherData[lookup][this.locale], value),
-        name: value,
+        id: key,
+        name: this.firstIfArray(gFisherData[lookup][this.parserLang][key]),
       };
     } else {
       // 3. Number with the ID
       info = {
         id: value,
-        name: gFisherData[lookup][this.locale][value],
+        name: this.firstIfArray(gFisherData[lookup][this.parserLang][value]),
       };
     }
 
@@ -197,15 +215,31 @@ class SeaBase {
   }
 
   getFish(fish) {
-    return this.getInfo('fish', fish);
+    let result = this.getInfo('fish', fish);
+    if (!result.id || !result.name)
+      console.log('failed to look up fish: ' + fish);
+    return result;
   }
 
   getBait(bait) {
-    return this.getInfo('tackle', bait);
+    let result = this.getInfo('tackle', bait);
+    if (!result.id || !result.name)
+      console.log('failed to look up bait: ' + bait);
+    return result;
   }
 
   getPlace(place) {
-    return this.getInfo('places', place);
+    let result = this.getInfo('places', place);
+
+    // English assumes that there could be a 'the' which fails
+    // for fishing locations that include the 'The'.
+    // This should probably be a noop for other languages.
+    if (!result.id || !result.name)
+      result = this.getInfo('places', 'The ' + place);
+
+    if (!result.id || !result.name)
+      console.log('failed to look up place: ' + place);
+    return result;
   }
 
   getFishForPlace(place) {
@@ -227,14 +261,14 @@ class SeaBase {
   queryHookTimes(index, fish, bait, chum) {
     let times = [];
 
-    return new Promise(function(resolve, reject) {
-      index.openCursor(IDBKeyRange.only([fish.id.toString(), bait.id, chum?1:0]))
-        .onsuccess = function(event) {
+    return new Promise((resolve, reject) => {
+      index.openCursor(IDBKeyRange.only([fish.id.toString(), bait.id, chum ? 1 : 0]))
+        .onsuccess = (event) => {
           let cursor = event.target.result;
 
           if (cursor) {
             times.push(cursor.value.hookTime);
-            if (times.length < Options.IQRHookQuantity)
+            if (times.length < this.options.IQRHookQuantity)
               cursor.continue();
             else
               resolve(times);
@@ -246,24 +280,22 @@ class SeaBase {
   }
 
   getHookTimes(fish, bait, chum) {
-    let _this = this;
-
     if (!fish || !bait) {
-      return new Promise(function(resolve, reject) {
+      return new Promise((resolve, reject) => {
         resolve();
       });
     }
 
-    return new Promise(function(resolve, reject) {
-      _this.getConnection().then(function(db) {
-        let tx = db.transaction(_this._storeName, 'readwrite');
-        let store = tx.objectStore(_this._storeName);
+    return new Promise((resolve, reject) => {
+      this.getConnection().then((db) => {
+        let tx = db.transaction(this._storeName, 'readwrite');
+        let store = tx.objectStore(this._storeName);
         let index = store.index('fishbaitchum');
 
-        _this.queryHookTimes(index, fish, bait, chum).then(function(times) {
+        this.queryHookTimes(index, fish, bait, chum).then((times) => {
           if (!times.length)
             resolve({ min: undefined, max: undefined });
-          resolve(_this.normalizeHooks(times));
+          resolve(this.normalizeHooks(times));
         });
       });
     });
@@ -272,13 +304,13 @@ class SeaBase {
   queryTug(index, fish) {
     let reelTimes = [];
 
-    return new Promise(function(resolve, reject) {
-      index.openCursor(IDBKeyRange.only(fish.id.toString())).onsuccess = function(event) {
+    return new Promise((resolve, reject) => {
+      index.openCursor(IDBKeyRange.only(fish.id.toString())).onsuccess = (event) => {
         let cursor = event.target.result;
 
         if (cursor) {
           reelTimes.push(cursor.value.reelTime);
-          if (reelTimes.length < Options.IQRTugQuantity)
+          if (reelTimes.length < this.options.IQRTugQuantity)
             cursor.continue();
           else
             resolve(reelTimes);
@@ -290,48 +322,54 @@ class SeaBase {
   }
 
   getTug(fish) {
-    let _this = this;
-
-    return new Promise(function(resolve, reject) {
-      _this.getConnection().then(function(db) {
-        let tx = db.transaction(_this._storeName, 'readwrite');
-        let store = tx.objectStore(_this._storeName);
+    return new Promise((resolve, reject) => {
+      this.getConnection().then((db) => {
+        let tx = db.transaction(this._storeName, 'readwrite');
+        let store = tx.objectStore(this._storeName);
         let index = store.index('fish');
 
-        _this.queryTug(index, fish).then(function(reelTimes) {
-          if (!reelTimes.length)
-            resolve(0);
-
-          let thresholds = _this.getIQRThresholds(reelTimes);
-
-          let sum = 0;
-          let validValues = 0;
-
-          reelTimes.forEach(function(time) {
-            if (time >= thresholds.low && time <= thresholds.high) {
-              sum += time;
-              validValues++;
-            }
-          });
-
-          let average = sum / validValues;
-          let tug;
-
-          // Small: <8000
-          // Medium: >8000, <10700
-          // Large: >10700
-          // 1 small, 2 medium, 3 large
-          if (average < 8000)
-            tug = 1;
-          else if (average > 10700)
-            tug = 3;
-          else
-            tug = 2;
-
-
+        let tug = gFisherData['tugs'][fish.id];
+        if (tug) {
           resolve(tug);
-        });
+        } else {
+          this.queryTug(index, fish).then((reelTimes) => {
+            if (!reelTimes.length)
+              resolve(0);
+
+            let thresholds = this.getIQRThresholds(reelTimes);
+
+            let sum = 0;
+            let validValues = 0;
+
+            reelTimes.forEach((time) => {
+              if (time >= thresholds.low && time <= thresholds.high) {
+                sum += time;
+                validValues++;
+              }
+            });
+
+            let average = sum / validValues;
+            let tug;
+
+            // Small: <8000
+            // Medium: >8000, <10700
+            // Large: >10700
+            // 1 small, 2 medium, 3 large
+            if (average < 8000)
+              tug = 1;
+            else if (average > 10700)
+              tug = 3;
+            else
+              tug = 2;
+
+
+            resolve(tug);
+          });
+        }
       });
     });
   }
 }
+
+if (typeof module !== 'undefined' && module.exports)
+  module.exports = SeaBase;

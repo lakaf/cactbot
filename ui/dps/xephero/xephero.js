@@ -3,8 +3,6 @@
 let rows = 10;
 let rdpsMax = 0;
 
-let tracker = new DpsPhaseTracker;
-
 function hideOverlay() {
   $('#overlay').addClass('hide');
 }
@@ -13,10 +11,14 @@ function showOverlay() {
   $('#overlay').removeClass('hide');
 }
 
-function update(dps) {
+function update(dps, tracker) {
+  let encounter = dps.Encounter;
+  let rdps = parseFloat(encounter.encdps);
+  if (isNaN(rdps) || rdps == Infinity)
+    return;
+
   showOverlay();
 
-  let encounter = dps.Encounter;
   let combatants = dps.Combatant;
   let template = $('#overlaysource li');
   let overlay = $('#overlay');
@@ -28,8 +30,6 @@ function update(dps) {
   // for now, always just fully replace the content
 
   container.html('');
-
-  let rdps = parseFloat(encounter.encdps);
 
   // sanity check
   if (!isNaN(rdps) && rdps != Infinity)
@@ -50,7 +50,7 @@ function update(dps) {
   container.append(header);
 
   let limit = Math.max(combatants.length, rows);
-  let names = Object.keys(combatants).slice(0, rows-1);
+  let names = Object.keys(combatants).slice(0, rows - 1);
   let maxdps = false;
 
   let dpsOrder = {};
@@ -150,21 +150,24 @@ function updatePhase(phase, dpsOrder) {
     maxPhaseDPS.row.addClass('highestdps');
 }
 
-function onOverlayDataUpdateEvent(e) {
-  tracker.onOverlayDataUpdate(e.detail);
-  update(e.detail);
-}
+UserConfig.getUserConfigLocation('xephero', Options, function(e) {
+  let tracker = new DpsPhaseTracker(Options);
+  const onOverlayDataUpdateEvent = (e) => {
+    tracker.onOverlayDataUpdate(e.detail);
+    update(e.detail, tracker);
+  };
 
-$(document).on('onZoneChangedEvent', function(e) {
-  let currentZone = e.originalEvent.detail.zoneName;
-  tracker.onZoneChange(currentZone);
-});
-$(document).on('onLogEvent', function(e) {
-  tracker.onLogEvent(e.originalEvent.detail.logs);
-});
-$(document).on('onInCombatChangedEvent', function(e) {
-  // Only clear phases when ACT starts a new encounter for consistency.
-  tracker.inCombatChanged(e.originalEvent.detail.inACTCombat);
-});
+  InitDpsModule(onOverlayDataUpdateEvent, hideOverlay);
 
-InitDpsModule('xephero', onOverlayDataUpdateEvent, hideOverlay);
+  addOverlayListener('ChangeZone', (e) => {
+    const currentZone = e.zoneName;
+    tracker.onChangeZone(currentZone);
+  });
+  addOverlayListener('onLogEvent', (e) => {
+    tracker.onLogEvent(e.detail.logs);
+  });
+  addOverlayListener('onInCombatChangedEvent', (e) => {
+    // Only clear phases when ACT starts a new encounter for consistency.
+    tracker.inCombatChanged(e.detail.inACTCombat);
+  });
+});
